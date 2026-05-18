@@ -106,6 +106,8 @@ def build():
 
   write(four_oh_four, '404.html')
 
+  print('Done')
+
 def clean():
   print('Cleaning')
   os.rmdir(BUILD_DIR)
