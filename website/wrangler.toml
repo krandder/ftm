@@ -1,0 +1,6 @@
+name = "takeoffspeeds"
+compatibility_date = "2026-05-18"
+
+[assets]
+directory = "./build"
+not_found_handling = "404-page"

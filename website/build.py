@@ -61,6 +61,7 @@ def build():
   '''
 
   write(playground, 'playground.html')
+  write(playground, 'index.html')
 
   reports = read('reports.html')
   reports = f'''
