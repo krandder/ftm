@@ -54,6 +54,7 @@ def build():
   playground = read('playground.html')
   playground = f'''
     <!DOCTYPE html>
+    <meta charset="utf-8">
     <title>Playground</title>
     {process_header(header, 'playground')}
     {playground}
@@ -66,6 +67,7 @@ def build():
   reports = read('reports.html')
   reports = f'''
     <!DOCTYPE html>
+    <meta charset="utf-8">
     <title>Reports</title>
     {process_header(header, 'reports')}
     {reports}
@@ -77,6 +79,7 @@ def build():
   description = read('description.html')
   description = f'''
     <!DOCTYPE html>
+    <meta charset="utf-8">
     <title>Description</title>
     {process_header(header, 'description')}
     {description}
@@ -88,6 +91,7 @@ def build():
   about = read('about.html')
   about = f'''
     <!DOCTYPE html>
+    <meta charset="utf-8">
     <title>About</title>
     {process_header(header, 'about')}
     {about}
@@ -99,6 +103,7 @@ def build():
   four_oh_four = read('404.html')
   four_oh_four = f'''
     <!DOCTYPE html>
+    <meta charset="utf-8">
     <title>Ooops!</title>
     {process_header(header, 'four_oh_four')}
     {four_oh_four}
