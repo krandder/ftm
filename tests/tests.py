@@ -608,17 +608,22 @@ class MiscTests(unittest.TestCase):
   def test_lognormal_requirements_from_gap(self):
     top = 6e31
     gap = 1e4
-    n_items = 10000
+    n_items = 100
 
-    requirements = SimulateTakeOff.lognormal_requirements_from_gap(top, gap, n_items)
+    requirements, masses = SimulateTakeOff.lognormal_requirements_and_masses_from_gap(top, gap, n_items)
 
     self.assertEqual(len(requirements), n_items)
+    self.assertEqual(len(masses), n_items)
     self.assertTrue(np.all(np.diff(requirements) > 0))
-    self.assertAlmostEqual(requirements[int(0.2*n_items)], top/gap, delta=0.02*top/gap)
-    self.assertAlmostEqual(requirements[int(0.99*n_items)], top, delta=0.02*top)
+    self.assertAlmostEqual(np.sum(masses), 1.0)
+    self.assertAlmostEqual(np.sum(masses[:20]), 0.2)
+    self.assertAlmostEqual(np.sum(masses[:80]), 0.99)
+    self.assertAlmostEqual(np.sum(masses[:90]), 0.999)
+    self.assertAlmostEqual(requirements[19], top/gap, delta=0.15*top/gap)
+    self.assertAlmostEqual(requirements[80], top, delta=0.15*top)
     self.assertGreater(requirements[-1], top)
 
-  def test_lognormal_distribution_flag_uses_10000_tasks(self):
+  def test_lognormal_distribution_flag_uses_weighted_100_task_buckets(self):
     parameters = {
       parameter: row['Best guess']
       for parameter, row in get_parameter_table().iterrows()
@@ -630,9 +635,14 @@ class MiscTests(unittest.TestCase):
       t_end=2022.2,
     )
 
-    self.assertEqual(model.n_labour_tasks_goods, 10000)
-    self.assertEqual(model.n_labour_tasks_rnd, 10000)
-    self.assertEqual(len(model.automation_training_flops_goods), 10001)
+    self.assertEqual(model.n_labour_tasks_goods, 100)
+    self.assertEqual(model.n_labour_tasks_rnd, 100)
+    self.assertEqual(len(model.automation_training_flops_goods), 101)
+    self.assertEqual(len(model.labour_task_masses_goods), 101)
+    self.assertAlmostEqual(np.sum(model.labour_task_masses_goods), 1.0)
+    self.assertAlmostEqual(np.sum(model.labour_task_masses_goods[1:21]), 0.2)
+    self.assertAlmostEqual(np.sum(model.labour_task_masses_goods[1:81]), 0.99)
+    self.assertAlmostEqual(np.sum(model.labour_task_masses_goods[1:91]), 0.999)
     self.assertGreater(model.automation_training_flops_goods[-1],
                        model.full_automation_training_flops_goods)
     self.assertIn('automation_gns_99%', model.timeline_metrics)

@@ -158,9 +158,6 @@ class SimulateTakeOff():
     for item in inspect.signature(SimulateTakeOff).parameters:
       setattr(self, item, eval(item))
 
-    if self.use_lognormal_task_distribution:
-      self.n_labour_tasks = 10000
-
     # Checks
     self.check_input_validity()
 
@@ -276,29 +273,29 @@ class SimulateTakeOff():
     self.automation_runtime_flop_gap_rnd = self.flop_gap_runtime
 
     # Define distribution of requirements
-    self.automation_training_flops_goods = \
-      SimulateTakeOff.requirements_from_gap(
+    self.automation_training_flops_goods, self.labour_task_masses_goods = \
+      SimulateTakeOff.requirements_and_masses_from_gap(
           self.full_automation_training_flops_goods,
           self.automation_training_flop_gap_goods,
           self.n_labour_tasks_goods,
           self.use_lognormal_task_distribution,
           )
-    self.automation_runtime_flops_goods = \
-      SimulateTakeOff.requirements_from_gap(
+    self.automation_runtime_flops_goods, _ = \
+      SimulateTakeOff.requirements_and_masses_from_gap(
           self.full_automation_runtime_flops_goods,
           self.automation_runtime_flop_gap_goods,
           self.n_labour_tasks_goods,
           self.use_lognormal_task_distribution,
           )
-    self.automation_training_flops_rnd = \
-      SimulateTakeOff.requirements_from_gap(
+    self.automation_training_flops_rnd, self.labour_task_masses_rnd = \
+      SimulateTakeOff.requirements_and_masses_from_gap(
           self.full_automation_training_flops_rnd,
           self.automation_training_flop_gap_rnd,
           self.n_labour_tasks_rnd,
           self.use_lognormal_task_distribution,
           )
-    self.automation_runtime_flops_rnd = \
-      SimulateTakeOff.requirements_from_gap(
+    self.automation_runtime_flops_rnd, _ = \
+      SimulateTakeOff.requirements_and_masses_from_gap(
           self.full_automation_runtime_flops_rnd,
           self.automation_runtime_flop_gap_rnd,
           self.n_labour_tasks_rnd,
@@ -339,10 +336,25 @@ class SimulateTakeOff():
       np.insert(self.automation_training_flops_goods, 0, 1.0)
     self.automation_runtime_flops_goods = \
       np.insert(self.automation_runtime_flops_goods, 0, 1.0)
+    self.labour_task_masses_goods = \
+      np.insert(self.labour_task_masses_goods, 0, 0.)
     self.automation_training_flops_rnd = \
       np.insert(self.automation_training_flops_rnd, 0, 1.0)
     self.automation_runtime_flops_rnd = \
       np.insert(self.automation_runtime_flops_rnd, 0, 1.0)
+    self.labour_task_masses_rnd = \
+      np.insert(self.labour_task_masses_rnd, 0, 0.)
+
+    self.labour_task_weight_multipliers_goods = \
+      SimulateTakeOff.task_weight_multipliers_from_masses(
+        self.labour_task_masses_goods,
+        self.labour_substitution_goods,
+      )
+    self.labour_task_weight_multipliers_rnd = \
+      SimulateTakeOff.task_weight_multipliers_from_masses(
+        self.labour_task_masses_rnd,
+        self.labour_substitution_rnd,
+      )
 
     # Check that the automation costs are monotonic
     if np.any(np.diff(self.automation_training_flops_goods) < 0.) \
@@ -726,49 +738,52 @@ class SimulateTakeOff():
       self.compute[t_idx] * self.frac_compute_training[t_idx]
 
     # Update index of automatable tasks
-    self.automatable_tasks_goods_no_tradeoff[t_idx] = np.sum(self.automation_training_flops_goods < self.biggest_training_run[t_idx])
-    self.automatable_tasks_rnd_no_tradeoff[t_idx] = np.sum(self.automation_training_flops_rnd < self.biggest_training_run[t_idx])
+    automatable_tasks_goods_no_tradeoff = \
+      self.automation_training_flops_goods < self.biggest_training_run[t_idx]
+    automatable_tasks_rnd_no_tradeoff = \
+      self.automation_training_flops_rnd < self.biggest_training_run[t_idx]
 
+    self.automatable_tasks_goods_no_tradeoff[t_idx] = \
+      np.sum(automatable_tasks_goods_no_tradeoff)
+    self.automatable_tasks_rnd_no_tradeoff[t_idx] = \
+      np.sum(automatable_tasks_rnd_no_tradeoff)
+
+    automatable_tasks_goods = \
+      self.automation_training_flops_goods < \
+      self.biggest_training_run[t_idx] \
+      * (self.runtime_training_max_tradeoff \
+      if self.runtime_training_tradeoff is not None \
+      else 1.)
     self.automatable_tasks_goods[t_idx] = \
-      np.sum(
-          self.automation_training_flops_goods < \
-          self.biggest_training_run[t_idx] \
-          * (self.runtime_training_max_tradeoff \
-          if self.runtime_training_tradeoff is not None \
-          else 1.)
-      )
+      np.sum(automatable_tasks_goods)
 
+    automatable_tasks_rnd = \
+      self.automation_training_flops_rnd < \
+      self.biggest_training_run[t_idx] \
+      * (self.runtime_training_max_tradeoff \
+      if self.runtime_training_tradeoff is not None \
+      else 1.)
     self.automatable_tasks_rnd[t_idx] = \
-      np.sum(
-          self.automation_training_flops_rnd < \
-          self.biggest_training_run[t_idx] \
-          * (self.runtime_training_max_tradeoff \
-          if self.runtime_training_tradeoff is not None \
-          else 1.)
-      )
+      np.sum(automatable_tasks_rnd)
 
     # Update fraction of automated tasks
     self.frac_automatable_tasks_goods_no_tradeoff[t_idx] =  \
-      (self.automatable_tasks_goods_no_tradeoff[t_idx] - 1) \
-      / self.n_labour_tasks_goods # We dont count the initial compute task
+      np.sum(self.labour_task_masses_goods[automatable_tasks_goods_no_tradeoff])
 
     self.frac_automatable_tasks_rnd_no_tradeoff[t_idx] =  \
-      (self.automatable_tasks_rnd_no_tradeoff[t_idx] - 1) \
-      / self.n_labour_tasks_rnd # We dont count the initial compute task
+      np.sum(self.labour_task_masses_rnd[automatable_tasks_rnd_no_tradeoff])
 
     self.frac_automatable_tasks_goods[t_idx] =  \
-      (self.automatable_tasks_goods[t_idx] - 1) \
-      / self.n_labour_tasks_goods # We dont count the initial compute task
+      np.sum(self.labour_task_masses_goods[automatable_tasks_goods])
 
     self.frac_automatable_tasks_rnd[t_idx] =  \
-      (self.automatable_tasks_rnd[t_idx] - 1) \
-      / self.n_labour_tasks_rnd # We dont count the initial compute task
+      np.sum(self.labour_task_masses_rnd[automatable_tasks_rnd])
 
     self.frac_automatable_tasks[t_idx] = \
-      (self.automatable_tasks_goods[t_idx] \
-      + self.automatable_tasks_rnd[t_idx] - 2)  \
-      / (self.n_labour_tasks_goods
-         + self.n_labour_tasks_rnd) # We dont count the initial compute task
+      (
+        self.frac_automatable_tasks_goods[t_idx] + \
+        self.frac_automatable_tasks_rnd[t_idx]
+      ) / 2
 
     runtime_requirements_goods = SimulateTakeOff.compute_runtime_requirements(
       self.runtime_training_tradeoff,
@@ -814,7 +829,8 @@ class SimulateTakeOff():
     if t_idx == 0:
 
       no_automation_labour_task_input_goods = np.zeros(self.n_labour_tasks_goods + 1)
-      no_automation_labour_task_input_goods[1:] = self.labour_goods[0] / self.n_labour_tasks_goods
+      no_automation_labour_task_input_goods[:] = \
+        self.labour_goods[0] * self.labour_task_masses_goods
 
       no_automation_compute_task_input_goods = np.zeros(self.n_labour_tasks_goods + 1)
       no_automation_compute_task_input_goods[0] = self.compute_goods[0]
@@ -835,6 +851,7 @@ class SimulateTakeOff():
           self.labour_substitution_goods,
           initial_capital_to_cognitive_share_ratio_goods,
           initial_compute_to_labour_share_ratio_goods,
+          self.labour_task_weight_multipliers_goods,
         )
 
     # Compute optimal task allocation
@@ -854,9 +871,9 @@ class SimulateTakeOff():
       self.task_compute_to_labour_ratio_goods[t_idx]*self.compute_task_input_goods[t_idx][:]
 
     self.frac_tasks_automated_goods[t_idx] =\
-      (np.sum(self.task_compute_to_labour_ratio_goods[t_idx]*self.compute_task_input_goods[t_idx] > 10 * self.labour_task_input_goods[t_idx]) - 1) \
-      / self.n_labour_tasks_goods
-    ## We substract 1 to account for the initial compute task
+      np.sum(self.labour_task_masses_goods[
+        self.task_compute_to_labour_ratio_goods[t_idx]*self.compute_task_input_goods[t_idx] > 10 * self.labour_task_input_goods[t_idx]
+      ])
 
     # Keep track of economy share ratios
     if self.compute_shares:
@@ -936,7 +953,8 @@ class SimulateTakeOff():
     # Initialize task weights to match the initial economy share ratio
     if t_idx == 0:
       no_automation_labour_task_input_rnd = np.zeros(self.n_labour_tasks_rnd + 1)
-      no_automation_labour_task_input_rnd[1:] = self.labour_hardware_rnd[0] / self.n_labour_tasks_rnd
+      no_automation_labour_task_input_rnd[:] = \
+        self.labour_hardware_rnd[0] * self.labour_task_masses_rnd
 
       no_automation_compute_task_input_rnd = np.zeros(self.n_labour_tasks_rnd + 1)
       no_automation_compute_task_input_rnd[0] = self.compute_hardware_rnd[0]
@@ -957,6 +975,7 @@ class SimulateTakeOff():
           self.labour_substitution_rnd,
           initial_capital_to_cognitive_share_ratio_hardware_rnd,
           initial_compute_to_labour_share_ratio_hardware_rnd,
+          self.labour_task_weight_multipliers_rnd,
         )
 
     # Compute optimal task allocation
@@ -977,9 +996,9 @@ class SimulateTakeOff():
 
     # Note down fraction of tasks automated
     self.frac_tasks_automated_rnd[t_idx] =\
-      (np.sum(self.task_compute_to_labour_ratio_rnd[t_idx]*self.compute_task_input_hardware_rnd[t_idx] > 10 * self.labour_task_input_hardware_rnd[t_idx]) - 1) \
-      / self.n_labour_tasks_rnd
-    ## We substract 1 to account for the initial compute task
+      np.sum(self.labour_task_masses_rnd[
+        self.task_compute_to_labour_ratio_rnd[t_idx]*self.compute_task_input_hardware_rnd[t_idx] > 10 * self.labour_task_input_hardware_rnd[t_idx]
+      ])
 
     # Keep track of economy shares
     if self.compute_shares:
@@ -1061,7 +1080,8 @@ class SimulateTakeOff():
     # Initialize task weights to match the initial economy share ratio
     if t_idx == 0:
       no_automation_labour_task_input_rnd = np.zeros(self.n_labour_tasks_rnd + 1)
-      no_automation_labour_task_input_rnd[1:] = self.labour_software_rnd[0] / self.n_labour_tasks_rnd
+      no_automation_labour_task_input_rnd[:] = \
+        self.labour_software_rnd[0] * self.labour_task_masses_rnd
 
       no_automation_compute_task_input_rnd = np.zeros(self.n_labour_tasks_rnd + 1)
       no_automation_compute_task_input_rnd[0] = self.compute_software_rnd[0]
@@ -1082,6 +1102,7 @@ class SimulateTakeOff():
           self.labour_substitution_rnd,
           initial_experiment_to_cognitive_share_ratio_software_rnd,
           initial_compute_to_labour_share_ratio_software_rnd,
+          self.labour_task_weight_multipliers_rnd,
         )
     
     
@@ -1380,6 +1401,16 @@ class SimulateTakeOff():
   ## AUXILIARY FUNCTIONS
 
   @staticmethod
+  def requirements_and_masses_from_gap(top, gap, n_items, use_lognormal_task_distribution=False):
+    if use_lognormal_task_distribution:
+      return SimulateTakeOff.lognormal_requirements_and_masses_from_gap(top, gap, n_items)
+
+    return (
+      SimulateTakeOff.requirements_from_gap(top, gap, n_items),
+      np.ones(n_items) / n_items,
+    )
+
+  @staticmethod
   def requirements_from_gap(top, gap, n_items, use_lognormal_task_distribution=False):
     if use_lognormal_task_distribution:
       return SimulateTakeOff.lognormal_requirements_from_gap(top, gap, n_items)
@@ -1389,6 +1420,17 @@ class SimulateTakeOff():
 
   @staticmethod
   def lognormal_requirements_from_gap(top, gap, n_items, top_quantile=0.99, gap_quantile=0.2):
+    requirements, _ = SimulateTakeOff.lognormal_requirements_and_masses_from_gap(
+      top,
+      gap,
+      n_items,
+      top_quantile,
+      gap_quantile,
+    )
+    return requirements
+
+  @staticmethod
+  def lognormal_requirements_and_masses_from_gap(top, gap, n_items, top_quantile=0.99, gap_quantile=0.2):
     """Return a smooth lognormal task threshold curve.
 
     Here `top` is interpreted as the 99th percentile task requirement, not
@@ -1402,8 +1444,52 @@ class SimulateTakeOff():
     sigma = (log_top - log_gap) / (z_top - z_gap)
     mu = log_top - sigma*z_top
 
-    q = (np.arange(n_items) + 0.5) / n_items
-    return 10**(mu + sigma*norm.ppf(q))
+    boundaries = SimulateTakeOff.lognormal_task_bucket_boundaries(n_items)
+    q = (boundaries[:-1] + boundaries[1:]) / 2
+    requirements = 10**(mu + sigma*norm.ppf(q))
+    masses = np.diff(boundaries)
+
+    return requirements, masses
+
+  @staticmethod
+  def lognormal_task_bucket_boundaries(n_items):
+    if n_items < 4:
+      return np.linspace(0, 1, n_items + 1)
+
+    low_count = max(1, round(0.20*n_items))
+    tail_count = max(1, round(0.10*n_items))
+    far_tail_count = max(1, round(0.10*n_items))
+    mid_count = n_items - low_count - tail_count - far_tail_count
+
+    while mid_count < 1:
+      if low_count >= tail_count and low_count > 1:
+        low_count -= 1
+      elif tail_count > 1:
+        tail_count -= 1
+      else:
+        far_tail_count -= 1
+      mid_count = n_items - low_count - tail_count - far_tail_count
+
+    segments = [
+      (0.0, 0.2, low_count),
+      (0.2, 0.99, mid_count),
+      (0.99, 0.999, tail_count),
+      (0.999, 1.0, far_tail_count),
+    ]
+
+    boundaries = [0.0]
+    for start, end, count in segments:
+      boundaries.extend(np.linspace(start, end, count + 1)[1:])
+
+    return np.array(boundaries)
+
+  @staticmethod
+  def task_weight_multipliers_from_masses(task_masses, rho):
+    multipliers = np.ones(len(task_masses))
+    labour_masses = task_masses[1:]
+    labour_multipliers = labour_masses**(1-rho)
+    multipliers[1:] = labour_multipliers / labour_multipliers.mean()
+    return multipliers
 
   @staticmethod
   def quantiles_from_gap(top, gap):
@@ -1588,6 +1674,7 @@ class SimulateTakeOff():
       labour_substitution,
       capital_to_cognitive_share_ratio,
       compute_to_labour_share_ratio,
+      labour_task_weight_multipliers = None,
     ):
     """ Computes the task weights that would result in a
         target capital_to_labour_share_ratio and compute_to_labour_share_ratio of the economy
@@ -1595,11 +1682,16 @@ class SimulateTakeOff():
 
     # Compute inner task weights
 
+    n_labour_tasks = len(labour_task_input)-1
+    if labour_task_weight_multipliers is None:
+      labour_task_weight_multipliers = np.ones(n_labour_tasks + 1)
+
     task_input = \
       labour_task_input + \
       task_compute_to_labour_ratio*compute_task_input
 
     labour_share = np.sum(
+      labour_task_weight_multipliers * \
       labour_task_input * \
       task_input**(labour_substitution-1)
     )
@@ -1618,10 +1710,12 @@ class SimulateTakeOff():
     compute_task_weight, labour_task_weight = \
       SimulateTakeOff.odds_to_probs(compute_to_labour_task_weight_ratio)
 
-    n_labour_tasks = len(labour_task_input)-1
     inner_task_weights = \
       np.array([compute_task_weight] +
-               [labour_task_weight for i in range(n_labour_tasks)]
+               [
+                 labour_task_weight * labour_task_weight_multipliers[i + 1]
+                 for i in range(n_labour_tasks)
+               ]
                )
 
     # Compute outer task weights
