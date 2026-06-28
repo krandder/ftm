@@ -20,8 +20,8 @@ LOGNORMAL_TASK_DISTRIBUTION_NAME = 'Use lognormal 99% task distribution'
 LOGNORMAL_TASK_DISTRIBUTION_MEANING = (
   'If enabled, task thresholds are generated from a lognormal distribution: '
   'the full automation requirement is treated as the 99th percentile task '
-  'threshold, the 20th percentile is pinned by the FLOP gap, and the task '
-  'grid is increased to 10,000 buckets.'
+  'threshold, the 20th percentile is pinned by the FLOP gap, and the default '
+  '100 task buckets are given unequal masses to resolve the 99%-99.9% tail.'
 )
 LOGNORMAL_TASK_DISTRIBUTION_JUSTIFICATION = (
   'Experimental alternative to the hardcoded FTM task quantile curve; useful '

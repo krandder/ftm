@@ -268,46 +268,46 @@ let ftm = {};
         consts.runtime_training_max_tradeoff = 1;
       }
 
-      if (consts.use_lognormal_task_distribution) {
-        consts.n_labour_tasks = 10000;
-      }
-
       consts.goods.n_labour_tasks = consts.n_labour_tasks;
       consts.rnd.n_labour_tasks = consts.n_labour_tasks;
 
       let seconds_per_year = 60*60*24*365;
 
-      consts.goods.automation_training_flops = this.process_automation_costs(
+      let goods_training_buckets = this.process_automation_buckets(
         consts.training.full_automation_requirements,
         consts.training.flop_gap,
         consts.goods.n_labour_tasks,
         consts.training.steepness,
         consts.use_lognormal_task_distribution,
       );
+      consts.goods.automation_training_flops = goods_training_buckets.requirements;
+      consts.goods.labour_task_masses = goods_training_buckets.masses;
 
-      consts.goods.automation_runtime_flops = this.process_automation_costs(
+      consts.goods.automation_runtime_flops = this.process_automation_buckets(
         consts.runtime.full_automation_requirements * seconds_per_year,
         consts.runtime.flop_gap,
         consts.goods.n_labour_tasks,
         consts.runtime.steepness,
         consts.use_lognormal_task_distribution,
-      );
+      ).requirements;
 
-      consts.rnd.automation_training_flops = this.process_automation_costs(
+      let rnd_training_buckets = this.process_automation_buckets(
         consts.training.full_automation_requirements / consts.training.goods_vs_rnd_requirements,
         consts.training.flop_gap,
         consts.rnd.n_labour_tasks,
         consts.training.steepness,
         consts.use_lognormal_task_distribution,
       );
+      consts.rnd.automation_training_flops = rnd_training_buckets.requirements;
+      consts.rnd.labour_task_masses = rnd_training_buckets.masses;
 
-      consts.rnd.automation_runtime_flops = this.process_automation_costs(
+      consts.rnd.automation_runtime_flops = this.process_automation_buckets(
         consts.runtime.full_automation_requirements * seconds_per_year / consts.runtime.goods_vs_rnd_requirements,
         consts.runtime.flop_gap,
         consts.rnd.n_labour_tasks,
         consts.runtime.steepness,
         consts.use_lognormal_task_distribution,
-      );
+      ).requirements;
 
       consts.initial.software = 1;
       consts.initial.tfp_goods = 1;
@@ -434,7 +434,9 @@ let ftm = {};
         if (compute == null) compute = state.compute * state.frac_compute[item].v;
 
         let no_automation_labour_task_input = nj.zeros(consts[category].n_labour_tasks + 1);
-        no_automation_labour_task_input.fill(labour / consts[category].n_labour_tasks, 1);
+        for (let i = 0; i < no_automation_labour_task_input.length; i++) {
+          no_automation_labour_task_input[i] = labour * consts[category].labour_task_masses[i];
+        }
 
         let no_automation_compute_task_input = nj.zeros(consts[category].n_labour_tasks + 1);
         no_automation_compute_task_input[0] = compute;
@@ -442,6 +444,10 @@ let ftm = {};
         let share = initial[item].share;
         let initial_capital_to_cognitive_share_ratio = share.capital / share.cognitive;
         let initial_compute_to_labour_share_ratio    = share.compute / share.labour;
+        let labour_task_weight_multipliers = this.task_weight_multipliers_from_masses(
+          consts[category].labour_task_masses,
+          consts[category].labour_substitution,
+        );
 
         let task_weights = this.adjust_task_weights(
           capital,
@@ -452,6 +458,7 @@ let ftm = {};
           consts[category].labour_substitution,
           initial_capital_to_cognitive_share_ratio,
           initial_compute_to_labour_share_ratio,
+          labour_task_weight_multipliers,
         );
 
         consts[item].capital_task_weights = task_weights.capital;
@@ -467,20 +474,39 @@ let ftm = {};
     }
 
     static process_automation_costs(full_automation_flops, flop_gap, n_labour_tasks, steepness, use_lognormal_task_distribution) {
+      return this.process_automation_buckets(
+        full_automation_flops,
+        flop_gap,
+        n_labour_tasks,
+        steepness,
+        use_lognormal_task_distribution,
+      ).requirements;
+    }
+
+    static process_automation_buckets(full_automation_flops, flop_gap, n_labour_tasks, steepness, use_lognormal_task_distribution) {
       let automation_flops;
+      let task_masses;
       if (use_lognormal_task_distribution) {
-        automation_flops = this.lognormal_requirements_from_gap(full_automation_flops, flop_gap, n_labour_tasks);
+        let buckets = this.lognormal_requirements_and_masses_from_gap(full_automation_flops, flop_gap, n_labour_tasks);
+        automation_flops = buckets.requirements;
+        task_masses = buckets.masses;
       } else {
         automation_flops = this.quantiles_from_gap(full_automation_flops, flop_gap);
         automation_flops = this.interpolate_quantiles(automation_flops, n_labour_tasks);
         automation_flops = this.add_steepness(full_automation_flops, flop_gap, automation_flops, steepness);
+        task_masses = Array(n_labour_tasks).fill(1 / n_labour_tasks);
       }
       nj.insert(automation_flops, 0, 1.0); // The first task is always automatable
+      nj.insert(task_masses, 0, 0.0);
 
-      return automation_flops;
+      return {requirements: automation_flops, masses: task_masses};
     }
 
     static lognormal_requirements_from_gap(top, gap, n_items) {
+      return this.lognormal_requirements_and_masses_from_gap(top, gap, n_items).requirements;
+    }
+
+    static lognormal_requirements_and_masses_from_gap(top, gap, n_items) {
       let top_quantile = 0.99;
       let gap_quantile = 0.2;
       let z_top = this.normal_ppf(top_quantile);
@@ -490,13 +516,66 @@ let ftm = {};
       let sigma = (log_top - log_gap) / (z_top - z_gap);
       let mu = log_top - sigma*z_top;
       let values = [];
+      let boundaries = this.lognormal_task_bucket_boundaries(n_items);
+      let masses = [];
 
       for (let i = 0; i < n_items; i++) {
-        let q = (i + 0.5) / n_items;
+        let q = (boundaries[i] + boundaries[i + 1]) / 2;
         values.push(10**(mu + sigma*this.normal_ppf(q)));
+        masses.push(boundaries[i + 1] - boundaries[i]);
       }
 
-      return nj.array(values);
+      return {requirements: nj.array(values), masses: nj.array(masses)};
+    }
+
+    static lognormal_task_bucket_boundaries(n_items) {
+      if (n_items < 4) {
+        return nj.linspace(0, 1, n_items + 1);
+      }
+
+      let low_count = Math.max(1, Math.round(0.20*n_items));
+      let tail_count = Math.max(1, Math.round(0.10*n_items));
+      let far_tail_count = Math.max(1, Math.round(0.10*n_items));
+      let mid_count = n_items - low_count - tail_count - far_tail_count;
+
+      while (mid_count < 1) {
+        if (low_count >= tail_count && low_count > 1) {
+          low_count -= 1;
+        } else if (tail_count > 1) {
+          tail_count -= 1;
+        } else {
+          far_tail_count -= 1;
+        }
+        mid_count = n_items - low_count - tail_count - far_tail_count;
+      }
+
+      let segments = [
+        [0.0, 0.2, low_count],
+        [0.2, 0.99, mid_count],
+        [0.99, 0.999, tail_count],
+        [0.999, 1.0, far_tail_count],
+      ];
+      let boundaries = [0.0];
+
+      for (let [start, end, count] of segments) {
+        let segment = nj.linspace(start, end, count + 1);
+        boundaries.push(...segment.slice(1));
+      }
+
+      return boundaries;
+    }
+
+    static task_weight_multipliers_from_masses(task_masses, rho) {
+      let multipliers = Array(task_masses.length).fill(1);
+      let labour_multipliers = [];
+      for (let i = 1; i < task_masses.length; i++) {
+        labour_multipliers.push(task_masses[i]**(1-rho));
+      }
+      let mean = nj.mean(labour_multipliers);
+      for (let i = 1; i < task_masses.length; i++) {
+        multipliers[i] = labour_multipliers[i - 1] / mean;
+      }
+      return multipliers;
     }
 
     static normal_ppf(p) {
@@ -628,6 +707,7 @@ let ftm = {};
       labour_substitution,
       capital_to_cognitive_share_ratio,
       compute_to_labour_share_ratio,
+      labour_task_weight_multipliers=null,
       ) {
       /*
         Computes the task weights that would result in a target capital_to_labour_share_ratio
@@ -637,16 +717,26 @@ let ftm = {};
       // Compute inner task weights
 
       let task_input = nj.add(labour_task_input, nj.mult(task_compute_to_labour_ratio, compute_task_input));
+      let n_labour_tasks = labour_task_input.length-1;
+      if (labour_task_weight_multipliers == null) {
+        labour_task_weight_multipliers = Array(n_labour_tasks + 1).fill(1);
+      }
 
-      let labour_share = nj.sum(nj.mult(labour_task_input, nj.pow(task_input, labour_substitution-1)));
+      let labour_share = nj.sum(nj.mult(labour_task_weight_multipliers, nj.mult(labour_task_input, nj.pow(task_input, labour_substitution-1))));
       let compute_share = nj.sum(nj.mult(task_compute_to_labour_ratio, nj.mult(compute_task_input, nj.pow(task_input, labour_substitution-1))));
 
       let compute_to_labour_task_weight_ratio = compute_to_labour_share_ratio * labour_share / compute_share;
 
       let [compute_task_weight, labour_task_weight] = odds_to_probs(compute_to_labour_task_weight_ratio);
 
-      let n_labour_tasks = labour_task_input.length-1;
-      let inner_task_weights = nj.array([compute_task_weight].concat(Array(n_labour_tasks).fill(labour_task_weight)));
+      let inner_task_weights = nj.array(
+        [compute_task_weight].concat(
+          Array.from(
+            {length: n_labour_tasks},
+            (_, i) => labour_task_weight * labour_task_weight_multipliers[i + 1],
+          )
+        )
+      );
 
       // Compute outer task weights
 
@@ -1169,11 +1259,19 @@ let ftm = {};
     }
 
     static get_frac_tasks_automated(statex, constsx) {
-      return this.get_automated_tasks_count(statex) / constsx.n_labour_tasks;
+      let is_automated = nj.gt(
+        nj.mult(statex.task_compute_to_labour_ratio, statex.compute_task_input),
+        nj.mult(10, statex.labour_task_input)
+      );
+      return this.sum_task_masses(is_automated, constsx.labour_task_masses);
     }
 
     static get_frac_automatable_tasks(state, consts, category, with_tradeoff=true) {
-      return this.get_automatable_task_count(state, consts, category, with_tradeoff) / consts[category].n_labour_tasks;
+      let is_automatable = nj.lt(
+        consts[category].automation_training_flops,
+        state.biggest_training_run * (with_tradeoff ? consts.runtime_training_max_tradeoff : 1)
+      );
+      return this.sum_task_masses(is_automatable, consts[category].labour_task_masses);
     }
 
     static get_automatable_task_count(state, consts, category, with_tradeoff=true) {
@@ -1181,6 +1279,14 @@ let ftm = {};
       return nj.count_true(
         nj.lt(consts[category].automation_training_flops, state.biggest_training_run * (with_tradeoff ? consts.runtime_training_max_tradeoff : 1))
       ) - 1;
+    }
+
+    static sum_task_masses(condition, task_masses) {
+      let total = 0;
+      for (let i = 0; i < condition.length; i++) {
+        if (condition[i]) total += task_masses[i];
+      }
+      return total;
     }
 
     // -------------------------------------------------------------------------

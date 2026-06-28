@@ -11,8 +11,9 @@ When enabled:
 - `flop_gap_training` still pins the gap between the 20th percentile and that
   99th percentile.
 - The same 99th-percentile interpretation is used for runtime requirements.
-- `n_labour_tasks` is forced to `10000`, so the model can distinguish 99.0%,
-  99.9%, and the last task bucket.
+- `n_labour_tasks` remains at its configured value (`100` by default), but the
+  buckets have unequal task masses: 20 buckets cover 0-20%, 60 cover 20-99%,
+  10 cover 99-99.9%, and 10 cover 99.9-100% when `n_labour_tasks = 100`.
 - The playground and Python timeline metrics report 99%, 99.9%, and 100%
   automation years for both goods/services and R&D.
 - The old `training_requirements_steepness` and
