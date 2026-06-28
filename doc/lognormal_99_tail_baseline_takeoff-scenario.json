@@ -1,0 +1,6 @@
+{
+  "full_automation_requirements_training": 6e31,
+  "flop_gap_training": 1e4,
+  "use_lognormal_task_distribution": true,
+  "runtime_training_max_tradeoff": 1e100
+}

@@ -15,6 +15,33 @@ important_params_and_metrics = pd.read_excel(
 )
 important_params = important_params_and_metrics['Parameter id'].tolist()
 
+LOGNORMAL_TASK_DISTRIBUTION_PARAMETER = 'use_lognormal_task_distribution'
+LOGNORMAL_TASK_DISTRIBUTION_NAME = 'Use lognormal 99% task distribution'
+LOGNORMAL_TASK_DISTRIBUTION_MEANING = (
+  'If enabled, task thresholds are generated from a lognormal distribution: '
+  'the full automation requirement is treated as the 99th percentile task '
+  'threshold, the 20th percentile is pinned by the FLOP gap, and the task '
+  'grid is increased to 10,000 buckets.'
+)
+LOGNORMAL_TASK_DISTRIBUTION_JUSTIFICATION = (
+  'Experimental alternative to the hardcoded FTM task quantile curve; useful '
+  'for inspecting 99%-99.9%-100% tail behavior.'
+)
+
+EXTRA_METRIC_NAMES = {
+  'automation_gns_99%': '99% automation year',
+  'automation_gns_99.9%': '99.9% automation year',
+  'automation_rnd_99%': '99% R&D automation year',
+  'automation_rnd_99.9%': '99.9% R&D automation year',
+}
+
+EXTRA_METRIC_MEANINGS = {
+  'automation_gns_99%': 'Year when AI has automated 99% of goods and services tasks.',
+  'automation_gns_99.9%': 'Year when AI has automated 99.9% of goods and services tasks.',
+  'automation_rnd_99%': 'Year when AI has automated 99% of R&D tasks (in software and hardware).',
+  'automation_rnd_99.9%': 'Year when AI has automated 99.9% of R&D tasks (in software and hardware).',
+}
+
 def generate_sidebar_content():
   parameter_table = get_parameter_table(tradeoff_enabled=True)
   best_guess_parameters = {parameter : row['Best guess'] for parameter, row in parameter_table.iterrows()}
@@ -44,6 +71,10 @@ def generate_sidebar_content():
 
     array.append(f'''<div class="{classes}"><label for="{label_target}">{name}</label>{additional_inputs} <input class="input" id="{param}" value="{prettify_float(value)}"></div>''')
     test += 1
+
+  extra_parameters.append(
+    f'''<div class="input-parameter"><label for="{LOGNORMAL_TASK_DISTRIBUTION_PARAMETER}">{LOGNORMAL_TASK_DISTRIBUTION_NAME}</label> <input class="input" id="{LOGNORMAL_TASK_DISTRIBUTION_PARAMETER}" type="checkbox"></div>'''
+  )
 
   # Basic params
   for p in important_parameters:
@@ -86,11 +117,23 @@ def prettify_float(x):
   return s
 
 def generate_dictionaries():
-  print(f'let parameter_names = {json.dumps(get_param_names())};')
-  print(f'let parameter_meanings = {json.dumps(get_parameters_meanings())};')
-  print(f'let parameter_justifications = {json.dumps(get_parameter_justifications())};')
-  print(f'let metric_names = {json.dumps(get_metric_names())};')
-  print(f'let metric_meanings = {json.dumps(get_metrics_meanings())};')
+  parameter_names = get_param_names()
+  parameter_names[LOGNORMAL_TASK_DISTRIBUTION_PARAMETER] = LOGNORMAL_TASK_DISTRIBUTION_NAME
+  parameter_meanings = get_parameters_meanings()
+  parameter_meanings[LOGNORMAL_TASK_DISTRIBUTION_PARAMETER] = LOGNORMAL_TASK_DISTRIBUTION_MEANING
+  parameter_justifications = get_parameter_justifications()
+  parameter_justifications[LOGNORMAL_TASK_DISTRIBUTION_PARAMETER] = LOGNORMAL_TASK_DISTRIBUTION_JUSTIFICATION
+
+  print(f'let parameter_names = {json.dumps(parameter_names)};')
+  print(f'let parameter_meanings = {json.dumps(parameter_meanings)};')
+  print(f'let parameter_justifications = {json.dumps(parameter_justifications)};')
+  metric_names = get_metric_names()
+  metric_names.update(EXTRA_METRIC_NAMES)
+  metric_meanings = get_metrics_meanings()
+  metric_meanings.update(EXTRA_METRIC_MEANINGS)
+
+  print(f'let metric_names = {json.dumps(metric_names)};')
+  print(f'let metric_meanings = {json.dumps(metric_meanings)};')
 
   print(f'let variable_names = {json.dumps(get_variable_names())};')
 
@@ -110,6 +153,7 @@ def generate_dictionaries():
 
   def handle_tradeoff(params):
     params['runtime_training_tradeoff_enabled'] = (params['runtime_training_tradeoff'] > 0)
+    params[LOGNORMAL_TASK_DISTRIBUTION_PARAMETER] = False
     return params
 
   print(f'let conservative_parameters = {json.dumps(handle_tradeoff(conservative_parameters))};')
