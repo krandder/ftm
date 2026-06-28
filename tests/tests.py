@@ -605,6 +605,41 @@ class MiscTests(unittest.TestCase):
 
       self.assertTrue(np.all(np.abs(np.log10(result / expected_result)) < 1e-8))
 
+  def test_lognormal_requirements_from_gap(self):
+    top = 6e31
+    gap = 1e4
+    n_items = 10000
+
+    requirements = SimulateTakeOff.lognormal_requirements_from_gap(top, gap, n_items)
+
+    self.assertEqual(len(requirements), n_items)
+    self.assertTrue(np.all(np.diff(requirements) > 0))
+    self.assertAlmostEqual(requirements[int(0.2*n_items)], top/gap, delta=0.02*top/gap)
+    self.assertAlmostEqual(requirements[int(0.99*n_items)], top, delta=0.02*top)
+    self.assertGreater(requirements[-1], top)
+
+  def test_lognormal_distribution_flag_uses_10000_tasks(self):
+    parameters = {
+      parameter: row['Best guess']
+      for parameter, row in get_parameter_table().iterrows()
+    }
+
+    model = SimulateTakeOff(
+      **parameters,
+      use_lognormal_task_distribution=True,
+      t_end=2022.2,
+    )
+
+    self.assertEqual(model.n_labour_tasks_goods, 10000)
+    self.assertEqual(model.n_labour_tasks_rnd, 10000)
+    self.assertEqual(len(model.automation_training_flops_goods), 10001)
+    self.assertGreater(model.automation_training_flops_goods[-1],
+                       model.full_automation_training_flops_goods)
+    self.assertIn('automation_gns_99%', model.timeline_metrics)
+    self.assertIn('automation_gns_99.9%', model.timeline_metrics)
+    self.assertIn('automation_rnd_99%', model.timeline_metrics)
+    self.assertIn('automation_rnd_99.9%', model.timeline_metrics)
+
   @staticmethod
   def process_quantiles_old(quantile_dict, n_items):
     """ Input is a dictionary of quantiles {q1:v1, ..., qn:vn}

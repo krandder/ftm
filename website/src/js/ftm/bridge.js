@@ -95,6 +95,7 @@ let bridge = {}
     'runtime_training_tradeoff':                           'runtime_training_tradeoff',
     'runtime_training_max_tradeoff':                       'runtime_training_max_tradeoff',
     'runtime_training_tradeoff_enabled':                   'runtime_training_tradeoff_enabled',
+    'use_lognormal_task_distribution':                     'use_lognormal_task_distribution',
     'n_labour_tasks':                                      'n_labour_tasks',
   };
 

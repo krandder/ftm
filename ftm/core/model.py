@@ -3,6 +3,7 @@ import inspect
 import matplotlib.pyplot as plt
 import pandas as pd
 import math
+from scipy.stats import norm
 
 from . import utils
 from .utils import get_option, get_parameter_table, init_cli_arguments, handle_cli_arguments
@@ -137,6 +138,7 @@ class SimulateTakeOff():
 
       disable_automation = None,
 
+      use_lognormal_task_distribution = False,
       n_labour_tasks = 100,
       ):
 
@@ -155,6 +157,9 @@ class SimulateTakeOff():
     # Add all inputs to model parameters
     for item in inspect.signature(SimulateTakeOff).parameters:
       setattr(self, item, eval(item))
+
+    if self.use_lognormal_task_distribution:
+      self.n_labour_tasks = 10000
 
     # Checks
     self.check_input_validity()
@@ -272,69 +277,62 @@ class SimulateTakeOff():
 
     # Define distribution of requirements
     self.automation_training_flops_goods = \
-      SimulateTakeOff.quantiles_from_gap(
+      SimulateTakeOff.requirements_from_gap(
           self.full_automation_training_flops_goods,
           self.automation_training_flop_gap_goods,
+          self.n_labour_tasks_goods,
+          self.use_lognormal_task_distribution,
           )
     self.automation_runtime_flops_goods = \
-      SimulateTakeOff.quantiles_from_gap(
+      SimulateTakeOff.requirements_from_gap(
           self.full_automation_runtime_flops_goods,
           self.automation_runtime_flop_gap_goods,
+          self.n_labour_tasks_goods,
+          self.use_lognormal_task_distribution,
           )
     self.automation_training_flops_rnd = \
-      SimulateTakeOff.quantiles_from_gap(
+      SimulateTakeOff.requirements_from_gap(
           self.full_automation_training_flops_rnd,
           self.automation_training_flop_gap_rnd,
+          self.n_labour_tasks_rnd,
+          self.use_lognormal_task_distribution,
           )
     self.automation_runtime_flops_rnd = \
-      SimulateTakeOff.quantiles_from_gap(
+      SimulateTakeOff.requirements_from_gap(
           self.full_automation_runtime_flops_rnd,
           self.automation_runtime_flop_gap_rnd,
+          self.n_labour_tasks_rnd,
+          self.use_lognormal_task_distribution,
           )
 
-    self.automation_training_flops_goods =\
-      SimulateTakeOff.process_quantiles(self.automation_training_flops_goods,
-                                        self.n_labour_tasks_goods)
+    if not self.use_lognormal_task_distribution:
+      self.automation_training_flops_goods =\
+        SimulateTakeOff.add_steepness(
+            self.full_automation_training_flops_goods,
+            self.automation_training_flop_gap_goods,
+            self.automation_training_flops_goods,
+            self.training_requirements_steepness)
 
-    self.automation_runtime_flops_goods =\
-      SimulateTakeOff.process_quantiles(self.automation_runtime_flops_goods,
-                                        self.n_labour_tasks_goods)
+      self.automation_runtime_flops_goods =\
+        SimulateTakeOff.add_steepness(
+            self.full_automation_runtime_flops_goods,
+            self.automation_runtime_flop_gap_goods,
+            self.automation_runtime_flops_goods,
+            self.runtime_requirements_steepness)
 
-    self.automation_training_flops_rnd =\
-      SimulateTakeOff.process_quantiles(self.automation_training_flops_rnd,
-                                        self.n_labour_tasks_rnd)
+      self.automation_training_flops_rnd =\
+        SimulateTakeOff.add_steepness(
+            self.full_automation_training_flops_rnd,
+            self.automation_training_flop_gap_rnd,
+            self.automation_training_flops_rnd,
+            self.training_requirements_steepness)
 
-    self.automation_runtime_flops_rnd =\
-      SimulateTakeOff.process_quantiles(self.automation_runtime_flops_rnd,
-                                        self.n_labour_tasks_rnd)
-
-    self.automation_training_flops_goods =\
-      SimulateTakeOff.add_steepness(
-          self.full_automation_training_flops_goods,
-          self.automation_training_flop_gap_goods,
-          self.automation_training_flops_goods,
-          self.training_requirements_steepness)
-
-    self.automation_runtime_flops_goods =\
-      SimulateTakeOff.add_steepness(
-          self.full_automation_runtime_flops_goods,
-          self.automation_runtime_flop_gap_goods,
-          self.automation_runtime_flops_goods,
-          self.runtime_requirements_steepness)
-
-    self.automation_training_flops_rnd =\
-      SimulateTakeOff.add_steepness(
-          self.full_automation_training_flops_rnd,
-          self.automation_training_flop_gap_rnd,
-          self.automation_training_flops_rnd,
-          self.training_requirements_steepness)
-
-    self.automation_runtime_flops_rnd =\
-      SimulateTakeOff.add_steepness(
-          self.full_automation_runtime_flops_rnd,
-          self.automation_runtime_flop_gap_rnd,
-          self.automation_runtime_flops_rnd,
-          self.runtime_requirements_steepness)
+      self.automation_runtime_flops_rnd =\
+        SimulateTakeOff.add_steepness(
+            self.full_automation_runtime_flops_rnd,
+            self.automation_runtime_flop_gap_rnd,
+            self.automation_runtime_flops_rnd,
+            self.runtime_requirements_steepness)
 
     # The first task is always automatable
     self.automation_training_flops_goods = \
@@ -1382,6 +1380,32 @@ class SimulateTakeOff():
   ## AUXILIARY FUNCTIONS
 
   @staticmethod
+  def requirements_from_gap(top, gap, n_items, use_lognormal_task_distribution=False):
+    if use_lognormal_task_distribution:
+      return SimulateTakeOff.lognormal_requirements_from_gap(top, gap, n_items)
+
+    quantiles = SimulateTakeOff.quantiles_from_gap(top, gap)
+    return SimulateTakeOff.process_quantiles(quantiles, n_items)
+
+  @staticmethod
+  def lognormal_requirements_from_gap(top, gap, n_items, top_quantile=0.99, gap_quantile=0.2):
+    """Return a smooth lognormal task threshold curve.
+
+    Here `top` is interpreted as the 99th percentile task requirement, not
+    the hardest task requirement. `gap` still pins the ratio between the
+    99th and 20th percentile requirements.
+    """
+    z_top = norm.ppf(top_quantile)
+    z_gap = norm.ppf(gap_quantile)
+    log_top = np.log10(top)
+    log_gap = np.log10(top/gap)
+    sigma = (log_top - log_gap) / (z_top - z_gap)
+    mu = log_top - sigma*z_top
+
+    q = (np.arange(n_items) + 0.5) / n_items
+    return 10**(mu + sigma*norm.ppf(q))
+
+  @staticmethod
   def quantiles_from_gap(top, gap):
       unit = gap**(1/7)
       quantiles = {
@@ -1723,8 +1747,12 @@ class SimulateTakeOff():
     'sub_agi_year',
     'agi_year',
     'automation_gns_20%',
+    'automation_gns_99%',
+    'automation_gns_99.9%',
     'automation_gns_100%',
     'automation_rnd_20%',
+    'automation_rnd_99%',
+    'automation_rnd_99.9%',
     'automation_rnd_100%',
     'rampup_start',
   ]
@@ -1732,12 +1760,12 @@ class SimulateTakeOff():
   def compute_timeline_metrics(self):
     unsorted_metrics = {}
 
-    for th in [0.2, 1.0]:
+    for th, label in [(0.2, '20%'), (0.99, '99%'), (0.999, '99.9%'), (1.0, '100%')]:
       t_year_gns = self.first_time(self.frac_tasks_automated_goods >= th)
-      unsorted_metrics[f'automation_gns_{int(th*100)}%'] = t_year_gns
+      unsorted_metrics[f'automation_gns_{label}'] = t_year_gns
 
       t_year_rnd = self.first_time(self.frac_tasks_automated_rnd >= th)
-      unsorted_metrics[f'automation_rnd_{int(th*100)}%'] = t_year_rnd
+      unsorted_metrics[f'automation_rnd_{label}'] = t_year_rnd
 
     unsorted_metrics['sub_agi_year'] = self.sub_agi_year
     unsorted_metrics['agi_year']     = self.agi_year

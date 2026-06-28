@@ -3,6 +3,9 @@ Work in progress! I don't recommend looking at the code right now. It needs to b
 
 For now, you might be interested in [the core file](ftm/core/model.py).
 
+See [doc/lognormal_task_distribution.md](doc/lognormal_task_distribution.md)
+for the optional 99%-anchored lognormal task distribution mode.
+
 Instructions to execute the model:
 - Clone the github repo 
 - Set up the environment (this project uses [Poetry](https://python-poetry.org/docs/)) with `poetry install`

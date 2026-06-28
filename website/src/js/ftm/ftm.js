@@ -43,6 +43,7 @@ let ftm = {};
     tfp_growth: 0.01,
 
     n_labour_tasks: 100,
+    use_lognormal_task_distribution: false,
 
     training: {
       full_automation_requirements: 1e36,
@@ -267,6 +268,10 @@ let ftm = {};
         consts.runtime_training_max_tradeoff = 1;
       }
 
+      if (consts.use_lognormal_task_distribution) {
+        consts.n_labour_tasks = 10000;
+      }
+
       consts.goods.n_labour_tasks = consts.n_labour_tasks;
       consts.rnd.n_labour_tasks = consts.n_labour_tasks;
 
@@ -277,6 +282,7 @@ let ftm = {};
         consts.training.flop_gap,
         consts.goods.n_labour_tasks,
         consts.training.steepness,
+        consts.use_lognormal_task_distribution,
       );
 
       consts.goods.automation_runtime_flops = this.process_automation_costs(
@@ -284,6 +290,7 @@ let ftm = {};
         consts.runtime.flop_gap,
         consts.goods.n_labour_tasks,
         consts.runtime.steepness,
+        consts.use_lognormal_task_distribution,
       );
 
       consts.rnd.automation_training_flops = this.process_automation_costs(
@@ -291,6 +298,7 @@ let ftm = {};
         consts.training.flop_gap,
         consts.rnd.n_labour_tasks,
         consts.training.steepness,
+        consts.use_lognormal_task_distribution,
       );
 
       consts.rnd.automation_runtime_flops = this.process_automation_costs(
@@ -298,6 +306,7 @@ let ftm = {};
         consts.runtime.flop_gap,
         consts.rnd.n_labour_tasks,
         consts.runtime.steepness,
+        consts.use_lognormal_task_distribution,
       );
 
       consts.initial.software = 1;
@@ -457,13 +466,93 @@ let ftm = {};
       _initialize_task_weight(state, consts, 'rnd', 'software_rnd', experiments_compute);
     }
 
-    static process_automation_costs(full_automation_flops, flop_gap, n_labour_tasks, steepness) {
-      let automation_flops = this.quantiles_from_gap(full_automation_flops, flop_gap);
-      automation_flops = this.interpolate_quantiles(automation_flops, n_labour_tasks);
-      automation_flops = this.add_steepness(full_automation_flops, flop_gap, automation_flops, steepness);
+    static process_automation_costs(full_automation_flops, flop_gap, n_labour_tasks, steepness, use_lognormal_task_distribution) {
+      let automation_flops;
+      if (use_lognormal_task_distribution) {
+        automation_flops = this.lognormal_requirements_from_gap(full_automation_flops, flop_gap, n_labour_tasks);
+      } else {
+        automation_flops = this.quantiles_from_gap(full_automation_flops, flop_gap);
+        automation_flops = this.interpolate_quantiles(automation_flops, n_labour_tasks);
+        automation_flops = this.add_steepness(full_automation_flops, flop_gap, automation_flops, steepness);
+      }
       nj.insert(automation_flops, 0, 1.0); // The first task is always automatable
 
       return automation_flops;
+    }
+
+    static lognormal_requirements_from_gap(top, gap, n_items) {
+      let top_quantile = 0.99;
+      let gap_quantile = 0.2;
+      let z_top = this.normal_ppf(top_quantile);
+      let z_gap = this.normal_ppf(gap_quantile);
+      let log_top = Math.log10(top);
+      let log_gap = Math.log10(top/gap);
+      let sigma = (log_top - log_gap) / (z_top - z_gap);
+      let mu = log_top - sigma*z_top;
+      let values = [];
+
+      for (let i = 0; i < n_items; i++) {
+        let q = (i + 0.5) / n_items;
+        values.push(10**(mu + sigma*this.normal_ppf(q)));
+      }
+
+      return nj.array(values);
+    }
+
+    static normal_ppf(p) {
+      // Peter J. Acklam's inverse normal CDF approximation.
+      if (p <= 0 || p >= 1) throw new Error('normal_ppf requires 0 < p < 1');
+
+      let a = [
+        -3.969683028665376e+01,
+         2.209460984245205e+02,
+        -2.759285104469687e+02,
+         1.383577518672690e+02,
+        -3.066479806614716e+01,
+         2.506628277459239e+00,
+      ];
+      let b = [
+        -5.447609879822406e+01,
+         1.615858368580409e+02,
+        -1.556989798598866e+02,
+         6.680131188771972e+01,
+        -1.328068155288572e+01,
+      ];
+      let c = [
+        -7.784894002430293e-03,
+        -3.223964580411365e-01,
+        -2.400758277161838e+00,
+        -2.549732539343734e+00,
+         4.374664141464968e+00,
+         2.938163982698783e+00,
+      ];
+      let d = [
+         7.784695709041462e-03,
+         3.224671290700398e-01,
+         2.445134137142996e+00,
+         3.754408661907416e+00,
+      ];
+
+      let plow = 0.02425;
+      let phigh = 1 - plow;
+      let q, r;
+
+      if (p < plow) {
+        q = Math.sqrt(-2*Math.log(p));
+        return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) /
+               ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+      }
+
+      if (p <= phigh) {
+        q = p - 0.5;
+        r = q*q;
+        return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q /
+               (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);
+      }
+
+      q = Math.sqrt(-2*Math.log(1-p));
+      return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) /
+              ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
     }
 
     static quantiles_from_gap(top, gap) {
@@ -1230,12 +1319,16 @@ let ftm = {};
       let timeline_metrics = {};
 
       timeline_metrics['automation_gns_20%'] = this.time_when(nj.gte(this.frac_tasks_automated_goods, 0.2));
+      timeline_metrics['automation_gns_99%'] = this.time_when(nj.gte(this.frac_tasks_automated_goods, 0.99));
+      timeline_metrics['automation_gns_99.9%'] = this.time_when(nj.gte(this.frac_tasks_automated_goods, 0.999));
       timeline_metrics['automation_gns_100%'] = this.time_when(nj.gte(this.frac_tasks_automated_goods, 1.0));
 
       timeline_metrics['sub_agi_year'] = this.sub_agi_year;
       timeline_metrics['agi_year']     = this.agi_year;
 
       timeline_metrics['automation_rnd_20%'] = this.time_when(nj.gte(this.frac_tasks_automated_rnd, 0.2));
+      timeline_metrics['automation_rnd_99%'] = this.time_when(nj.gte(this.frac_tasks_automated_rnd, 0.99));
+      timeline_metrics['automation_rnd_99.9%'] = this.time_when(nj.gte(this.frac_tasks_automated_rnd, 0.999));
       timeline_metrics['automation_rnd_100%'] = this.time_when(nj.gte(this.frac_tasks_automated_rnd, 1.0));
 
       timeline_metrics['rampup_start'] = this.rampup_start;
