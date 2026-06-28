@@ -30,6 +30,9 @@ let ui_state = {
   metrics_graph_side_selection: 'GWP',
 };
 
+let backgroundTimers = [];
+let yearByYearTableDirty = true;
+
 let metrics_to_show = document.getElementById('metrics-to-show');
 metrics_to_show.addEventListener('change',  () => {
   ui_state.metrics_to_show = metrics_to_show.value;
@@ -86,101 +89,135 @@ function run_simulation(immediate, callback) {
     document.body.classList.add('running');
     cancelBackgroundProcesses();
     dispatchBackgroundProcess(() => {
-      let js_params = bridge.transform_python_to_js_params(params);
-      sim = ftm.run_simulation(js_params);
+      try {
+        let js_params = bridge.transform_python_to_js_params(params);
+        sim = ftm.run_simulation(js_params);
 
-      if (callback) {
-        callback(sim);
-      }
-
-      let t = sim.get_thread('t_year');
-      let indices = sim.get_thread('t_idx');
-      //let b = sim.get_thread('biggest_training_run');
-      let b = sim.get_thread('compute');
-
-      metrics_to_show.value = ui_state.metrics_to_show;
-      metrics_to_show.dispatchEvent(new Event('change'));
-
-      clear_tables('#summary-table-container');
-      clear_tables('#year-by-year-table-container');
-
-      let summary_table_wrapper = add_table('#summary-table-container', sim.get_summary_table());
-      summary_table_wrapper.scrollLeft = ui_state.summary_table_scroll_x;
-      summary_table_wrapper.addEventListener('scroll', () => {
-        ui_state.summary_table_scroll_x = summary_table_wrapper.scrollLeft;
-      });
-
-      let detailed_table = {
-        'Year':                 t,
-        'Rampup':               sim.get_thread('rampup'),
-        'Hardware performance': sim.get_thread('hardware_performance.v'),
-        'Compute investment':   sim.get_thread('frac_gwp.compute.v'),
-        'Hardware':             sim.get_thread('hardware'),
-        'Software':             sim.get_thread('software.v'),
-        'Compute':              sim.get_thread('compute'),
-        'Labour':               sim.get_thread('labour'),
-        'Capital':              sim.get_thread('capital'),
-        'GWP':                  sim.get_thread('gwp'),
-        'Biggest training run': sim.get_thread('biggest_training_run'),
-      };
-
-      let yearly_table = {};
-
-      let prev_year = null;
-      for (let i of indices) {
-        let year = Math.floor(t[i]);
-        if (year != prev_year) {
-          for (let v in detailed_table) {
-            if (!(v in yearly_table)) yearly_table[v] = [];
-            yearly_table[v].push((v == 'Year') ? year : detailed_table[v][i]);
-          }
-          prev_year = year;
+        if (callback) {
+          callback(sim);
         }
+
+        let t = sim.get_thread('t_year');
+        //let b = sim.get_thread('biggest_training_run');
+
+        metrics_to_show.value = ui_state.metrics_to_show;
+        metrics_to_show.dispatchEvent(new Event('change'));
+
+        clear_tables('#summary-table-container');
+        clear_tables('#year-by-year-table-container');
+        yearByYearTableDirty = true;
+        if (is_year_by_year_modal_open()) {
+          refresh_year_by_year_table();
+        }
+
+        let summary_table_wrapper = add_table('#summary-table-container', sim.get_summary_table());
+        summary_table_wrapper.scrollLeft = ui_state.summary_table_scroll_x;
+        summary_table_wrapper.addEventListener('scroll', () => {
+          ui_state.summary_table_scroll_x = summary_table_wrapper.scrollLeft;
+        });
+
+        injectMeaningTooltips();
+
+        plt.clear('#metrics-graph-container');
+        plt.clear('#compute-decomposition-graph-container');
+
+        plt.set_defaults({
+          yscale: 'log',
+        });
+
+        plot_compute_decomposition(sim, '#compute-decomposition-graph-container');
+
+        let frac_automated_tasks = nj.array(sim.states.length);
+        for (let i = 0; i < sim.states.length; i++) {
+          frac_automated_tasks[i] = (sim.frac_tasks_automated_goods[i] + sim.frac_tasks_automated_rnd[i]) / 2;
+        }
+
+        add_multigraph(sim, [
+          { label: 'GWP',                     var: 'gwp',                    yscale: 'log'},
+          { label: 'Software',                var: 'software.v',             yscale: 'log'},
+          { label: 'Hardware',                var: 'hardware',               yscale: 'log'},
+          { label: 'Hardware efficiency',     var: 'hardware_performance.v', yscale: 'log'},
+          { label: 'Labour',                  var: 'labour',                 yscale: 'log'},
+          { label: 'Capital',                 var: 'capital',                yscale: 'log'},
+          { label: 'Compute',                 var: 'compute',                yscale: 'log'},
+          { label: 'Biggest training run',    var: 'biggest_training_run',   yscale: 'log'},
+          { label: 'Money spent on training', var: 'money_spent_training',   yscale: 'log'},
+
+          { label: 'Fraction of GWP spent on training', var: nj.div(sim.get_thread('money_spent_training'), sim.get_thread('gwp')), yscale: 'log'},
+          { label: 'Fraction of compute invested in training', var: 'frac_compute.training.v', yscale: 'log'},
+
+          { label: 'Fraction of all cognitive tasks automated (goods and services and R&D)', var: frac_automated_tasks, yscale: 'linear'},
+        ], '#metrics-graph-container');
+      } catch (error) {
+        console.error(error);
+        throw error;
+      } finally {
+        document.body.classList.remove('running');
       }
-
-      add_table('#year-by-year-table-container', yearly_table);
-
-      injectMeaningTooltips();
-
-      plt.clear('#metrics-graph-container');
-      plt.clear('#compute-decomposition-graph-container');
-
-      plt.set_defaults({
-        yscale: 'log',
-      });
-
-      plot_compute_decomposition(sim, '#compute-decomposition-graph-container');
-
-      let frac_automated_tasks = nj.array(sim.states.length);
-      for (let i = 0; i < sim.states.length; i++) {
-        frac_automated_tasks[i] =
-          (ftm.Model.get_automated_tasks_count(sim.states[i].goods) + ftm.Model.get_automated_tasks_count(sim.states[i].hardware_rnd))
-            / (sim.consts.goods.n_labour_tasks + sim.consts.rnd.n_labour_tasks);
-      }
-
-      add_multigraph(sim, [
-        { label: 'GWP',                     var: 'gwp',                    yscale: 'log'},
-        { label: 'Software',                var: 'software.v',             yscale: 'log'},
-        { label: 'Hardware',                var: 'hardware',               yscale: 'log'},
-        { label: 'Hardware efficiency',     var: 'hardware_performance.v', yscale: 'log'},
-        { label: 'Labour',                  var: 'labour',                 yscale: 'log'},
-        { label: 'Capital',                 var: 'capital',                yscale: 'log'},
-        { label: 'Compute',                 var: 'compute',                yscale: 'log'},
-        { label: 'Biggest training run',    var: 'biggest_training_run',   yscale: 'log'},
-        { label: 'Money spent on training', var: 'money_spent_training',   yscale: 'log'},
-
-        { label: 'Fraction of GWP spent on training', var: nj.div(sim.get_thread('money_spent_training'), sim.get_thread('gwp')), yscale: 'log'},
-        { label: 'Fraction of compute invested in training', var: 'frac_compute.training.v', yscale: 'log'},
-
-        { label: 'Fraction of all cognitive tasks automated (goods and services and R&D)', var: frac_automated_tasks, yscale: 'linear'},
-      ], '#metrics-graph-container');
-
-      document.body.classList.remove('running');
-    }, immediate ? 20 : 500);
+    }, immediate ? 0 : 200);
   }
 }
 
+function build_year_by_year_table() {
+  if (!sim) {
+    return null;
+  }
+
+  let t = sim.get_thread('t_year');
+  let indices = sim.get_thread('t_idx');
+  let detailed_table = {
+    'Year':                 t,
+    'Rampup':               sim.get_thread('rampup'),
+    'Hardware performance': sim.get_thread('hardware_performance.v'),
+    'Compute investment':   sim.get_thread('frac_gwp.compute.v'),
+    'Hardware':             sim.get_thread('hardware'),
+    'Software':             sim.get_thread('software.v'),
+    'Compute':              sim.get_thread('compute'),
+    'Labour':               sim.get_thread('labour'),
+    'Capital':              sim.get_thread('capital'),
+    'GWP':                  sim.get_thread('gwp'),
+    'Biggest training run': sim.get_thread('biggest_training_run'),
+  };
+
+  let yearly_table = {};
+  let prev_year = null;
+  for (let i of indices) {
+    let year = Math.floor(t[i]);
+    if (year != prev_year) {
+      for (let v in detailed_table) {
+        if (!(v in yearly_table)) yearly_table[v] = [];
+        yearly_table[v].push((v == 'Year') ? year : detailed_table[v][i]);
+      }
+      prev_year = year;
+    }
+  }
+  return yearly_table;
+}
+
+function refresh_year_by_year_table() {
+  if (!yearByYearTableDirty) {
+    return;
+  }
+  clear_tables('#year-by-year-table-container');
+  let yearly_table = build_year_by_year_table();
+  if (yearly_table) {
+    add_table('#year-by-year-table-container', yearly_table);
+    injectMeaningTooltips();
+  }
+  yearByYearTableDirty = false;
+}
+
+function is_year_by_year_modal_open() {
+  let modal = document.getElementById('year-by-year-modal');
+  return modal && (modal.classList.contains('is-open') || modal.getAttribute('aria-hidden') == 'false');
+}
+
 let tradeoff_enabled = document.querySelectorAll('.runtime_training_tradeoff_enabled');
+let yearByYearTrigger = document.querySelector('[data-modal-trigger="year-by-year-modal"]');
+
+if (yearByYearTrigger) {
+  yearByYearTrigger.addEventListener('click', refresh_year_by_year_table);
+}
 
 function update_tradeoff_disabled(enable) {
   let tradeoff = document.getElementById('runtime_training_tradeoff');
@@ -239,6 +276,13 @@ function export_scenario() {
 }
 
 function import_scenario(params) {
+  if (!('use_lognormal_task_distribution' in params)) {
+    params = {
+      ...params,
+      use_lognormal_task_distribution: false,
+    };
+  }
+
   for (let param in params) {
     let input = document.getElementById(param);
     if (!input) {
@@ -948,8 +992,6 @@ document.addEventListener('keyup', (e) => {
 // ------------------------------------------------------------------------
 // Misc
 // ------------------------------------------------------------------------
-
-let backgroundTimers = [];
 
 function dispatchBackgroundProcess(f, debounceTimeout) {
   if (debounceTimeout == 0) {

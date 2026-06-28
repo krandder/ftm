@@ -1372,10 +1372,18 @@ let ftm = {};
     // -------------------------------------------------------------------------
 
     get_thread(path) {
+      if (!this.thread_cache) {
+        this.thread_cache = {};
+      }
+      if (path in this.thread_cache) {
+        return this.thread_cache[path];
+      }
+
       let thread = [];
       for (let state of this.states) {
         thread.push(this.get_by_path(state, path));
       }
+      this.thread_cache[path] = thread;
       return thread;
     }
 
@@ -1487,20 +1495,10 @@ let ftm = {};
 
       let prerampup = (this.rampup_start == null) ? null : (this.consts.t_start + this.rampup_start)/2;
 
-      let frac_tasks_automated_goods = nj.array(this.states.length);
-      for (let i = 0; i < this.states.length; i++) {
-        frac_tasks_automated_goods[i] = Model.get_frac_tasks_automated(this.states[i].goods, this.consts.goods);
-      }
-
-      let frac_tasks_automated_rnd = nj.array(this.states.length);
-      for (let i = 0; i < this.states.length; i++) {
-        frac_tasks_automated_rnd[i] = Model.get_frac_tasks_automated(this.states[i].hardware_rnd, this.consts.rnd);
-      }
-
       let raw_metrics = {
         'biggest_training_run':       this.get_thread('biggest_training_run'),
-        'frac_tasks_automated_goods': frac_tasks_automated_goods,
-        'frac_tasks_automated_rnd':   frac_tasks_automated_rnd,
+        'frac_tasks_automated_goods': this.frac_tasks_automated_goods,
+        'frac_tasks_automated_rnd':   this.frac_tasks_automated_rnd,
       };
 
       let doubling_time_metrics = {
